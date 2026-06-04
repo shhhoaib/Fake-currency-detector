@@ -5,7 +5,6 @@ const nextConfig = {
       { protocol: "https", hostname: "**" },
     ],
   },
-  output: "standalone",
 }
 
 module.exports = nextConfig

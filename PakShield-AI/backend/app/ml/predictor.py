@@ -2,8 +2,6 @@ import os
 import numpy as np
 import cv2
 import joblib
-import torch
-import torch.nn as nn
 from app.config import get_settings
 
 settings = get_settings()
@@ -22,21 +20,6 @@ _global_yolo_loaded = False
 IMG_SIZE = 224
 MIN_CONFIDENCE = 90.0
 TORCH_IMG_SIZE = 64
-
-
-class TinyCNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(3, 16, 3, padding=1), nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(2),
-            nn.Conv2d(16, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(), nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(), nn.MaxPool2d(2),
-            nn.AdaptiveAvgPool2d(1), nn.Flatten(),
-            nn.Dropout(0.4), nn.Linear(64, 1), nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        return self.net(x)
 
 
 def _extract_features(img_path):
@@ -145,6 +128,7 @@ def _load_torch_model():
     torch_path = os.path.join(os.path.dirname(settings.model_path), "model_torch.pt")
     if os.path.exists(torch_path):
         try:
+            import torch
             _global_torch_model = torch.jit.load(torch_path, map_location="cpu")
             _global_torch_model.eval()
             return True
@@ -172,6 +156,7 @@ def _load_yolo_model():
 def _preprocess_torch(image_path):
     try:
         from PIL import Image
+        import torch
         img = Image.open(image_path).convert("RGB").resize((TORCH_IMG_SIZE, TORCH_IMG_SIZE))
         arr = np.array(img, dtype=np.float32) / 255.0
         arr = (arr - 0.5) / 0.5
@@ -254,6 +239,7 @@ def predict_image(image_path):
 
     torch_input = _preprocess_torch(image_path)
     if _load_torch_model() and torch_input is not None:
+        import torch
         with torch.no_grad():
             pred = _global_torch_model(torch_input).item()
         if pred > 0.5:
