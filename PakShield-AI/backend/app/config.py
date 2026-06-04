@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     model_path: str = "./app/ml/model.h5"
     max_upload_size: int = 10_485_760
     allowed_extensions: str = "png,jpg,jpeg"
-    cors_origins: str = "http://localhost:3000,http://localhost:8000"
+    cors_origins_regex: str = "https?://(localhost:[0-9]+|.*\\.vercel\\.app|.*\\.railway\\.app)"
 
     class Config:
         env_file = ".env"
