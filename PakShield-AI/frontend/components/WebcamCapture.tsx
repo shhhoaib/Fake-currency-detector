@@ -14,8 +14,11 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
   const [captured, setCaptured] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [active, setActive] = useState(false)
+  const [requested, setRequested] = useState(false)
 
   const startCamera = useCallback(async () => {
+    if (requested) return
+    setRequested(true)
     setError(null)
     try {
       const s = await navigator.mediaDevices.getUserMedia({
@@ -26,9 +29,16 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
       setActive(true)
       if (videoRef.current) videoRef.current.srcObject = s
     } catch (err: any) {
-      setError(err?.message || "Camera access denied")
+      setRequested(false)
+      if (err?.name === "NotAllowedError") {
+        setError("Camera access denied — allow camera permission in your browser settings")
+      } else if (err?.name === "NotFoundError") {
+        setError("No camera found on this device")
+      } else {
+        setError(err?.message || "Camera access denied")
+      }
     }
-  }, [])
+  }, [requested])
 
   const stopCamera = useCallback(() => {
     if (stream) {
@@ -37,6 +47,7 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
     }
     setActive(false)
     setCaptured(null)
+    setRequested(false)
   }, [stream])
 
   const capture = useCallback(() => {
@@ -61,10 +72,6 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
     }
   }, [stream])
 
-  useEffect(() => {
-    startCamera()
-  }, [startCamera])
-
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-center p-4">
@@ -82,16 +89,25 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
 
   if (!active) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-3">
+      <button
+        onClick={startCamera}
+        className="flex flex-col items-center justify-center h-full w-full gap-3 bg-transparent border-0 cursor-pointer"
+      >
         <span className="text-4xl text-primary/50">📷</span>
-        <p className="font-mono text-[10px] text-primary/50 uppercase">ACCESSING CAMERA...</p>
-      </div>
+        <p className="font-mono text-[10px] text-primary/50 uppercase">TAP TO START CAMERA</p>
+      </button>
     )
   }
 
   return (
     <div className="relative w-full h-full flex items-center justify-center">
-      <video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain" />
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="w-full h-full object-contain"
+      />
       <canvas ref={canvasRef} className="hidden" />
       {captured && (
         <img src={captured} alt="Captured" className="absolute inset-0 w-full h-full object-contain z-10" />
