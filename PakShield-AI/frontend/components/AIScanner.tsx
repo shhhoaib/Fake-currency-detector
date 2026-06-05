@@ -55,7 +55,7 @@ export default function AIScanner() {
     setScanning(true)
 
     const scanLogs = [
-      "[SCAN] Initiating neural analysis...",
+      "[SCAN] Initializing neural analysis...",
       "[SCAN] Loading banknote signature...",
       "[SCAN] Comparing watermark flux vectors...",
       "[SCAN] Analyzing microtext integrity...",
