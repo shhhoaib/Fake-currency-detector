@@ -20,6 +20,9 @@ class ScanRecord(Base):
     denomination: Mapped[str | None] = mapped_column(String(50), nullable=True)
     serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     features_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    feature_scores_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    security_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reasons_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     processing_time_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

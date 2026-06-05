@@ -26,6 +26,9 @@ async def get_history(
                 denomination=s.denomination,
                 serial_number=s.serial_number,
                 features=json.loads(s.features_json) if s.features_json else None,
+                feature_scores=json.loads(s.feature_scores_json) if s.feature_scores_json else None,
+                security_analysis=json.loads(s.security_json) if s.security_json else None,
+                reasons=json.loads(s.reasons_json) if s.reasons_json else None,
                 processing_time_ms=s.processing_time_ms,
                 created_at=s.created_at,
             )

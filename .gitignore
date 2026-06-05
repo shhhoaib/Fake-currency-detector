@@ -20,8 +20,12 @@ out/
 .env.local
 
 # Uploads
-uploads/*
-!uploads/.gitkeep
+**/uploads/*
+!**/uploads/.gitkeep
+
+# Database
+*.db
+*.sqlite3
 
 # IDE
 .vscode/
@@ -41,6 +45,13 @@ yolo_dataset_mini/
 *.pt
 *.torchscript
 torch_confusion_matrix.png
+
+# Exception for production model
+!PakShield-AI/backend/app/ml/yolo_cls.pt
+
+# Logs
+*.log
+*.err
 
 # Docker
 .docker/

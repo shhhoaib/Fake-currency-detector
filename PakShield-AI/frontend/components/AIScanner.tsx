@@ -6,6 +6,7 @@ import { detectAPI } from "@/lib/api"
 import toast from "react-hot-toast"
 import WebcamCapture from "./WebcamCapture"
 import ImageVariants from "./ImageVariants"
+import SecurityCharts from "./SecurityCharts"
 
 interface ScanResult {
   result: string
@@ -13,6 +14,9 @@ interface ScanResult {
   denomination?: string
   processing_time_ms?: number
   features?: Record<string, number>
+  feature_scores?: Record<string, number>
+  security_analysis?: Record<string, any>
+  reasons?: string[]
 }
 
 interface VariantsData {
@@ -30,7 +34,7 @@ interface VariantsData {
 }
 
 export default function AIScanner() {
-  const [mode, setMode] = useState<"upload" | "webcam">("upload")
+  const [mode, setMode] = useState<"upload" | "live">("upload")
   const [scanning, setScanning] = useState(false)
   const [result, setResult] = useState<ScanResult | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -133,14 +137,14 @@ export default function AIScanner() {
               📁 UPLOAD
             </button>
             <button
-              onClick={() => { setMode("webcam"); setPreview(null); setResult(null); setVariants(null) }}
+              onClick={() => { setMode("live"); setPreview(null); setResult(null); setVariants(null) }}
               className={`px-3 py-1 font-mono text-[9px] uppercase border transition-all ${
-                mode === "webcam"
+                mode === "live"
                   ? "bg-primary/20 border-primary text-primary"
                   : "bg-black/40 border-outline-variant text-on-surface-variant hover:border-primary/50"
               }`}
             >
-              📷 WEBCAM
+              📷 LIVE SCAN
             </button>
           </div>
 
@@ -164,7 +168,7 @@ export default function AIScanner() {
                 <div className="corner-bracket corner-br"></div>
               </>
             ) : (
-              <WebcamCapture onCapture={(file) => { setPreview(null); processImage(file) }} scanning={scanning} />
+              <WebcamCapture onCapture={(file) => { setPreview(null); processImage(file) }} scanning={scanning} key="webcam" />
             )}
           </div>
 
@@ -215,6 +219,26 @@ export default function AIScanner() {
                       </div>
                     ))}
                   </div>
+                )}
+                {result.reasons && result.reasons.length > 0 && (
+                  <div className="mt-4 pt-3 border-t border-primary/20">
+                    <p className="font-mono text-[10px] text-on-surface-variant uppercase mb-2">ANALYSIS_REASONS</p>
+                    <ul className="space-y-1.5">
+                      {result.reasons.map((reason, i) => (
+                        <li key={i} className="flex items-start gap-2 font-mono text-[10px] leading-relaxed">
+                          <span className={`mt-0.5 ${result.result === "REAL" ? "text-primary-container" : "text-error"}`}>▸</span>
+                          <span className="text-on-surface-variant">{reason}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {result.feature_scores && result.security_analysis && (
+                  <SecurityCharts
+                    featureScores={result.feature_scores}
+                    securityAnalysis={result.security_analysis}
+                    result={result.result}
+                  />
                 )}
               </motion.div>
             )}

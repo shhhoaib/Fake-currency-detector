@@ -56,6 +56,9 @@ async def detect_currency(
         denomination=record.denomination,
         serial_number=record.serial_number,
         features=json.loads(record.features_json) if record.features_json else None,
+        feature_scores=json.loads(record.feature_scores_json) if record.feature_scores_json else None,
+        security_analysis=json.loads(record.security_json) if record.security_json else None,
+        reasons=json.loads(record.reasons_json) if record.reasons_json else None,
         processing_time_ms=record.processing_time_ms,
         created_at=record.created_at,
     )

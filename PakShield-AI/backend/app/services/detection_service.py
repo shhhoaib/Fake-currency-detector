@@ -27,6 +27,9 @@ async def process_detection(
         denomination=result.get("denomination"),
         serial_number=result.get("serial_number"),
         features_json=json.dumps(result.get("features", {})),
+        feature_scores_json=json.dumps(result.get("feature_scores", {})),
+        security_json=json.dumps(result.get("security_analysis", {})),
+        reasons_json=json.dumps(result.get("reasons", [])),
         processing_time_ms=round(elapsed, 2),
     )
     db.add(record)

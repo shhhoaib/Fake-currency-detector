@@ -39,3 +39,13 @@ async def get_db():
 async def init_db():
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    async with get_engine().begin() as conn:
+        def _migrate(conn):
+            import sqlalchemy as sa
+            inspector = sa.inspect(conn)
+            columns = [c["name"] for c in inspector.get_columns("scan_records")]
+            for col in ["feature_scores_json", "security_json", "reasons_json"]:
+                if col not in columns:
+                    conn.execute(sa.text(f"ALTER TABLE scan_records ADD COLUMN {col} TEXT"))
+        await conn.run_sync(_migrate)

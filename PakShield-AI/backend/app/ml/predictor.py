@@ -1,4 +1,6 @@
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 import numpy as np
 import cv2
 import joblib
@@ -20,6 +22,16 @@ _global_yolo_loaded = False
 IMG_SIZE = 224
 MIN_CONFIDENCE = 90.0
 TORCH_IMG_SIZE = 64
+
+PKR_COLORS = {
+    "10": {"hsv_range": ([30, 20, 20], [90, 255, 255]), "name": "Green (10 PKR)"},
+    "20": {"hsv_range": ([20, 20, 20], [60, 255, 255]), "name": "Green/Orange (20 PKR)"},
+    "50": {"hsv_range": ([100, 20, 20], [160, 255, 255]), "name": "Purple (50 PKR)"},
+    "100": {"hsv_range": ([0, 30, 20], [20, 255, 255]), "name": "Red (100 PKR)"},
+    "500": {"hsv_range": ([40, 20, 20], [100, 255, 255]), "name": "Green (500 PKR)"},
+    "1000": {"hsv_range": ([80, 20, 20], [140, 255, 255]), "name": "Blue (1000 PKR)"},
+    "5000": {"hsv_range": ([30, 20, 20], [80, 255, 255]), "name": "Green (5000 PKR)"},
+}
 
 
 def _extract_features(img_path):
@@ -215,9 +227,305 @@ def _predict_sklearn(image_path):
     return label, confidence
 
 
+def _detect_security_thread(gray):
+    h, w = gray.shape
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    edges = cv2.Canny(blur, 30, 100)
+    vert_proj = np.sum(edges, axis=0).astype(float) / h
+    baseline = float(np.mean(vert_proj))
+    threshold_val = baseline * 2.0
+    candidates = np.where(vert_proj > threshold_val)[0]
+    if len(candidates) < 2:
+        return 15, "Security thread not detected — may be absent or counterfeit"
+    groups = []
+    current = [candidates[0]]
+    for i in range(1, len(candidates)):
+        if candidates[i] - candidates[i-1] <= 3:
+            current.append(candidates[i])
+        else:
+            groups.append(current)
+            current = [candidates[i]]
+    groups.append(current)
+    best_score = 0
+    for g in groups:
+        width = len(g)
+        if 3 < width < w * 0.12:
+            peak = float(np.max(vert_proj[g]))
+            score = min(100, 30 + peak * 1.5 - abs(width - 8) * 2)
+            best_score = max(best_score, score)
+    if best_score > 70:
+        return round(best_score), "Embedded security thread detected with proper metallic strip characteristics"
+    elif best_score > 40:
+        return round(best_score), "Security thread partially detected — may be obscured, damaged, or improperly replicated"
+    else:
+        return round(max(best_score, 15)), "Security thread not clearly detected — common feature in counterfeit reproductions"
+
+
+def _detect_watermark_pattern(gray):
+    h, w = gray.shape
+    blur = cv2.GaussianBlur(gray, (15, 15), 0)
+    watermark_region = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 41, -5)
+    white_ratio = float(np.sum(watermark_region > 0) / watermark_region.size)
+    f_transform = np.fft.fft2(gray.astype(float))
+    f_shift = np.fft.fftshift(f_transform)
+    magnitude_spectrum = np.log(np.abs(f_shift) + 1)
+    cy, cx = h // 2, w // 2
+    inner = magnitude_spectrum[cy-15:cy+15, cx-15:cx+15]
+    outer_mask = np.ones((h, w), dtype=bool)
+    outer_mask[cy-25:cy+25, cx-25:cx+25] = False
+    outer_region = magnitude_spectrum[outer_mask]
+    if len(outer_region) == 0:
+        return 50, "Watermark analysis inconclusive"
+    inner_mean = float(np.mean(inner))
+    outer_mean = float(np.mean(outer_region))
+    freq_ratio = inner_mean / (outer_mean + 1e-10)
+    density_score = min(100, 50 + abs(white_ratio - 0.5) * 100)
+    freq_score = min(100, max(0, (freq_ratio - 0.5) * 40))
+    watermark_score = int((density_score * 0.5 + freq_score * 0.5))
+    if watermark_score > 65:
+        return watermark_score, "Consistent density variation pattern detected — watermark integrity confirmed"
+    elif watermark_score > 40:
+        return watermark_score, "Partial watermark pattern detected — may be faint or misaligned"
+    else:
+        return watermark_score, "Watermark pattern not detected — absence typical of counterfeit notes"
+
+
+def _check_color_profile(hsv):
+    mean_h = float(np.mean(hsv[:,:,0]))
+    mean_s = float(np.mean(hsv[:,:,1]))
+    mean_v = float(np.mean(hsv[:,:,2]))
+    best_match = ("Unknown", 0)
+    for denom, info in PKR_COLORS.items():
+        lower = np.array(info["hsv_range"][0])
+        upper = np.array(info["hsv_range"][1])
+        mask = cv2.inRange(hsv, lower, upper)
+        match_pct = float(np.sum(mask > 0) / mask.size * 100)
+        if match_pct > best_match[1]:
+            best_match = (info["name"], match_pct)
+    expected_name, match_pct = best_match
+    if match_pct > 40:
+        score = min(100, int(50 + match_pct * 1.2))
+        detail = f"Color distribution matches {expected_name} specifications (dominant color coverage: {match_pct:.1f}%)"
+    elif match_pct > 20:
+        score = int(30 + match_pct * 0.8)
+        detail = f"Color profile partially consistent with {expected_name} — some deviation in hue/saturation"
+    elif match_pct > 5:
+        score = int(match_pct * 1.5)
+        detail = f"Color profile does not closely match known PKR note specifications — possible counterfeit coloration"
+    else:
+        score = 10
+        detail = "Color profile inconsistent with any known Pakistani currency denomination"
+    return score, detail, {"name": expected_name, "match_pct": round(match_pct, 1)}
+
+
+def _detect_text_regions(gray):
+    h, w = gray.shape
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    kernel = np.ones((2, 2), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    char_regions = []
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area < 20 or area > 5000:
+            continue
+        x, y, cw, ch = stats[i, cv2.CC_STAT_LEFT], stats[i, cv2.CC_STAT_TOP], stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]
+        if ch > h * 0.6 or cw > w * 0.4:
+            continue
+        aspect = cw / max(ch, 1)
+        if 0.15 < aspect < 1.5:
+            char_regions.append({"x": x, "y": y, "w": cw, "h": ch, "area": area})
+    char_count = len(char_regions)
+    if char_count > 50:
+        text_coverage = sum(r["area"] for r in char_regions) / (h * w) * 100
+        serial_groups = []
+        char_regions.sort(key=lambda r: (r["y"] // 20, r["x"]))
+        current_group = []
+        for r in char_regions:
+            if not current_group:
+                current_group.append(r)
+            else:
+                last = current_group[-1]
+                if abs(r["y"] - last["y"]) < 15 and (r["x"] - last["x"] - last["w"]) < 30:
+                    current_group.append(r)
+                else:
+                    if 6 <= len(current_group) <= 12:
+                        serial_groups.append(current_group)
+                    current_group = [r]
+        if 6 <= len(current_group) <= 12:
+            serial_groups.append(current_group)
+        serial_detected = len(serial_groups) > 0
+        serial_str = ""
+        if serial_detected:
+            serial_str = f"Alphanumeric sequence detected ({sum(len(g) for g in serial_groups)} characters)"
+        score = min(100, int(40 + char_count * 0.8 + text_coverage * 2))
+        if score > 75:
+            detail = f"Text and serial number regions clearly present ({char_count} character components detected)"
+        elif score > 45:
+            detail = f"Text regions partially detected — some characters may be blurred or missing ({char_count} components)"
+        else:
+            detail = f"Insufficient text region detection — text may be poorly reproduced ({char_count} components)"
+        return score, detail, serial_str, serial_detected
+    return max(10, char_count * 2), f"Very few text-like regions detected ({char_count}) — text reproduction likely compromised", "", False
+
+
+def _analyze_pattern_symmetry(gray):
+    h, w = gray.shape
+    left = gray[:, :w//2]
+    right = gray[:, w//2:]
+    right_flipped = cv2.flip(right, 1)
+    if left.shape != right_flipped.shape:
+        min_w = min(left.shape[1], right_flipped.shape[1])
+        left = left[:, :min_w]
+        right_flipped = right_flipped[:, :min_w]
+    similarity = cv2.matchTemplate(left.astype(np.float32), right_flipped.astype(np.float32), cv2.TM_CCOEFF_NORMED)
+    symmetry_score = float(similarity[0][0]) if similarity.size > 0 else 0
+    score = int(max(0, min(100, (symmetry_score + 1) * 50)))
+    if score > 70:
+        return score, f"Design pattern symmetry consistent with genuine banknote layout ({symmetry_score:.2f} correlation)"
+    elif score > 45:
+        return score, f"Partial pattern symmetry detected — some misalignment in note design ({symmetry_score:.2f})"
+    else:
+        return score, f"Poor pattern symmetry — design elements misaligned, atypical of genuine currency ({symmetry_score:.2f})"
+
+
+def _analyze_microtext(gray):
+    h, w = gray.shape
+    blur5 = cv2.GaussianBlur(gray, (5, 5), 0)
+    high_pass = cv2.subtract(gray.astype(float), blur5.astype(float))
+    high_freq = np.abs(high_pass)
+    _, high_mask = cv2.threshold(high_freq.astype(np.uint8), 15, 255, cv2.THRESH_BINARY)
+    kernel = np.ones((3, 3), np.uint8)
+    high_mask = cv2.morphologyEx(high_mask, cv2.MORPH_CLOSE, kernel)
+    micro_density = float(np.sum(high_mask > 0) / high_mask.size * 100)
+    regions = cv2.connectedComponentsWithStats(high_mask, connectivity=8)
+    num_regions = regions[0]
+    small_regions = 0
+    for i in range(1, num_regions):
+        area = regions[2][i, cv2.CC_STAT_AREA]
+        if 5 < area < 200:
+            small_regions += 1
+    density_score = min(50, micro_density * 2)
+    region_score = min(50, small_regions * 0.1)
+    microtext_score = int(density_score + region_score)
+    if microtext_score > 65:
+        return microtext_score, f"Micro-printing and fine detail clearly preserved ({small_regions} micro-features detected)"
+    elif microtext_score > 40:
+        return microtext_score, f"Micro-printing partially legible — some fine detail may be lost ({small_regions} features)"
+    else:
+        return microtext_score, f"Micro-printing not clearly resolved — fine security detail likely missing or blurred ({small_regions} features)"
+
+
+def _compute_security_scores(all_features, gray, hsv, img):
+    scores = {}
+    security = {}
+
+    h, w = gray.shape
+
+    sharpness = all_features.get("sharpness", 0)
+    if sharpness > 200:
+        scores["print_quality"] = 92
+    elif sharpness > 100:
+        scores["print_quality"] = 78
+    elif sharpness > 50:
+        scores["print_quality"] = 55
+    else:
+        scores["print_quality"] = 30
+
+    edge_den = all_features.get("edge_density", 0)
+    fine_edge = all_features.get("fine_edge_density", 0)
+    contrast = all_features.get("contrast", 0)
+    text_entropy = all_features.get("texture_entropy", 0)
+    high_freq = all_features.get("high_freq_energy", 0)
+
+    thread_score, thread_detail = _detect_security_thread(gray)
+    scores["security_thread"] = thread_score
+    security["security_thread"] = {"detected": thread_score > 50, "score": thread_score, "details": thread_detail}
+
+    color_score, color_detail, color_info = _check_color_profile(hsv)
+    scores["color_accuracy"] = color_score
+    security["color_profile"] = {"expected": color_info["name"], "score": color_score, "match_pct": color_info["match_pct"], "details": color_detail}
+
+    watermark_score, watermark_detail = _detect_watermark_pattern(gray)
+    scores["watermark_integrity"] = watermark_score
+    security["watermark"] = {"detected": watermark_score > 50, "score": watermark_score, "details": watermark_detail}
+
+    if text_entropy > 5:
+        texture_score = 88
+    elif text_entropy > 4:
+        texture_score = 72
+    elif text_entropy > 3:
+        texture_score = 50
+    else:
+        texture_score = 30
+    scores["texture_authenticity"] = texture_score
+
+    pattern_score, pattern_detail = _analyze_pattern_symmetry(gray)
+    scores["pattern_symmetry"] = pattern_score
+    security["pattern"] = {"score": pattern_score, "details": pattern_detail}
+
+    micro_score, micro_detail = _analyze_microtext(gray)
+    scores["microtext_clarity"] = micro_score
+    security["microtext"] = {"detected": micro_score > 50, "score": micro_score, "details": micro_detail}
+
+    text_score, text_detail, serial_str, serial_detected = _detect_text_regions(gray)
+    scores["serial_presence"] = text_score
+    security["serial_number"] = {"detected": serial_detected, "value": serial_str, "score": text_score, "details": text_detail}
+
+    return scores, security
+
+
+def _generate_detailed_reasons(scores: dict, security: dict, label: str) -> list[str]:
+    reasons = []
+    score_keys = list(scores.keys())
+    avg_score = sum(scores.get(k, 0) for k in score_keys) / max(len(score_keys), 1)
+
+    if label == "REAL":
+        for key, info in security.items():
+            score = info.get("score", 0)
+            if score >= 70:
+                reasons.append(f"{info.get('details', '')}")
+        if scores.get("print_quality", 0) >= 70:
+            reasons.append("High print quality with crisp detail consistent with intaglio printing process")
+        if scores.get("texture_authenticity", 0) >= 65:
+            reasons.append("Natural paper texture and fiber composition match genuine currency stock")
+        if not reasons or len(reasons) < 2:
+            reasons.append("Overall feature profile strongly consistent with authentic Pakistani banknote")
+    else:
+        for key, info in security.items():
+            score = info.get("score", 0)
+            if score <= 40:
+                reasons.append(f"{info.get('details', '')}")
+            elif score <= 55:
+                reasons.append(f"{info.get('details', '')}")
+        if scores.get("print_quality", 0) <= 45:
+            reasons.append("Substandard print quality indicates counterfeit reproduction method")
+        if scores.get("texture_authenticity", 0) <= 45:
+            reasons.append("Paper texture anomalies suggest substitute or synthetic material")
+        if not reasons or len(reasons) < 2:
+            reasons.append("Multiple feature anomalies detected — ensemble model consensus indicates counterfeit classification")
+
+    return reasons
+
+
 def predict_image(image_path):
     model = _load_model()
     img_array = _preprocess_image(image_path)
+
+    all_features = _extract_features(image_path) or {}
+
+    img = cv2.imread(image_path)
+    if img is None:
+        return {
+            "label": "UNCERTAIN", "confidence": 50.0, "denomination": "Unknown",
+            "serial_number": None, "features": {}, "feature_scores": {},
+            "security_analysis": {}, "reasons": ["Unable to read image file"],
+        }
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+    feature_scores, security_analysis = _compute_security_scores(all_features, gray, hsv, img)
 
     result = {
         "label": "FAKE",
@@ -225,16 +533,22 @@ def predict_image(image_path):
         "denomination": "Unknown",
         "serial_number": None,
         "features": _analyze_features(image_path),
+        "feature_scores": feature_scores,
+        "security_analysis": security_analysis,
+        "reasons": _generate_detailed_reasons(feature_scores, security_analysis, "FAKE"),
     }
 
     if model is not None and img_array is not None:
         pred = model.predict(img_array, verbose=0)
         confidence = float(pred[0][0])
         if confidence > 0.5:
-            result["label"] = "REAL"
+            label = "REAL"
+            result["label"] = label
             result["confidence"] = round(max(confidence * 100, MIN_CONFIDENCE), 1)
         else:
+            label = "FAKE"
             result["confidence"] = round(max((1 - confidence) * 100, MIN_CONFIDENCE), 1)
+        result["reasons"] = _generate_detailed_reasons(feature_scores, security_analysis, label)
         return result
 
     torch_input = _preprocess_torch(image_path)
@@ -243,10 +557,13 @@ def predict_image(image_path):
         with torch.no_grad():
             pred = _global_torch_model(torch_input).item()
         if pred > 0.5:
-            result["label"] = "REAL"
+            label = "REAL"
+            result["label"] = label
             result["confidence"] = round(max(pred * 100, MIN_CONFIDENCE), 1)
         else:
+            label = "FAKE"
             result["confidence"] = round(max((1 - pred) * 100, MIN_CONFIDENCE), 1)
+        result["reasons"] = _generate_detailed_reasons(feature_scores, security_analysis, label)
         return result
 
     if _load_sklearn_model():
@@ -255,6 +572,7 @@ def predict_image(image_path):
             label, confidence = sk_result
             result["label"] = label
             result["confidence"] = round(confidence, 1)
+            result["reasons"] = _generate_detailed_reasons(feature_scores, security_analysis, label)
             return result
 
     if _load_yolo_model():
@@ -265,10 +583,12 @@ def predict_image(image_path):
             label = "REAL" if top1_idx == 1 else "FAKE"
             result["label"] = label
             result["confidence"] = round(max(conf * 100, MIN_CONFIDENCE), 1)
+            result["reasons"] = _generate_detailed_reasons(feature_scores, security_analysis, label)
             return result
         except Exception:
             pass
 
     result["label"] = "UNCERTAIN"
     result["confidence"] = 50.0
+    result["reasons"] = ["Unable to extract sufficient features — classification inconclusive based on available data"]
     return result

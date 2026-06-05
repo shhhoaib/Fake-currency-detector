@@ -61,6 +61,10 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
     }
   }, [stream])
 
+  useEffect(() => {
+    startCamera()
+  }, [startCamera])
+
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-center p-4">
@@ -78,9 +82,9 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
 
   if (!active) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 cursor-pointer" onClick={startCamera}>
+      <div className="flex flex-col items-center justify-center h-full gap-3">
         <span className="text-4xl text-primary/50">📷</span>
-        <p className="font-mono text-[10px] text-primary/50 uppercase">START_CAMERA</p>
+        <p className="font-mono text-[10px] text-primary/50 uppercase">ACCESSING CAMERA...</p>
       </div>
     )
   }
