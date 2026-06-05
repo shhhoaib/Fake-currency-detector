@@ -12,23 +12,33 @@ type FacingMode = "user" | "environment"
 export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [stream, setStream] = useState<MediaStream | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const facingRef = useRef<FacingMode>("environment")
+  const requestedRef = useRef(false)
+
   const [captured, setCaptured] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [active, setActive] = useState(false)
-  const [requested, setRequested] = useState(false)
   const [facingMode, setFacingMode] = useState<FacingMode>("environment")
   const [torchOn, setTorchOn] = useState(false)
   const [torchSupported, setTorchSupported] = useState(false)
+
+  const stopStream = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+    }
+  }, [])
 
   const startCamera = useCallback(async (facing: FacingMode) => {
     setError(null)
     try {
       const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: facing },
         audio: false,
       })
-      setStream(s)
+      streamRef.current = s
+      facingRef.current = facing
       setActive(true)
       setTorchOn(false)
       setTorchSupported(false)
@@ -42,7 +52,7 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
         }
       }
     } catch (err: any) {
-      setRequested(false)
+      requestedRef.current = false
       if (err?.name === "NotAllowedError") {
         setError("Camera access denied — allow camera permission in your browser settings")
       } else if (err?.name === "NotFoundError") {
@@ -54,26 +64,24 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
   }, [])
 
   const handleStart = useCallback(() => {
-    if (requested) return
-    setRequested(true)
-    startCamera(facingMode)
-  }, [requested, startCamera, facingMode])
+    if (requestedRef.current) return
+    requestedRef.current = true
+    startCamera(facingRef.current)
+  }, [startCamera])
 
   const toggleCamera = useCallback(() => {
-    const next: FacingMode = facingMode === "environment" ? "user" : "environment"
+    const next: FacingMode = facingRef.current === "environment" ? "user" : "environment"
+    facingRef.current = next
     setFacingMode(next)
-    if (stream) {
-      stream.getTracks().forEach((t) => t.stop())
-      setStream(null)
-    }
-    setActive(false)
     setCaptured(null)
-    startCamera(next)
-  }, [facingMode, stream, startCamera])
+    stopStream()
+    setActive(false)
+    setTimeout(() => startCamera(next), 300)
+  }, [stopStream, startCamera])
 
   const toggleTorch = useCallback(async () => {
-    if (!stream) return
-    const track = stream.getVideoTracks()[0]
+    if (!streamRef.current) return
+    const track = streamRef.current.getVideoTracks()[0]
     if (!track) return
     try {
       await track.applyConstraints({ advanced: [{ torch: !torchOn }] as any })
@@ -81,18 +89,15 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
     } catch {
       // torch not supported on this device
     }
-  }, [stream, torchOn])
+  }, [torchOn])
 
   const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach((t) => t.stop())
-      setStream(null)
-    }
+    stopStream()
+    requestedRef.current = false
     setActive(false)
     setCaptured(null)
-    setRequested(false)
     setTorchOn(false)
-  }, [stream])
+  }, [stopStream])
 
   const capture = useCallback(() => {
     const video = videoRef.current
@@ -102,7 +107,7 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
     canvas.height = video.videoHeight
     const ctx = canvas.getContext("2d")
     if (!ctx) return
-    if (facingMode === "user") {
+    if (facingRef.current === "user") {
       ctx.translate(canvas.width, 0)
       ctx.scale(-1, 1)
     }
@@ -112,13 +117,11 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
     canvas.toBlob((blob) => {
       if (blob) onCapture(new File([blob], "webcam_capture.jpg", { type: "image/jpeg" }))
     }, "image/jpeg", 0.92)
-  }, [onCapture, facingMode])
+  }, [onCapture])
 
   useEffect(() => {
-    return () => {
-      if (stream) stream.getTracks().forEach((t) => t.stop())
-    }
-  }, [stream])
+    return () => stopStream()
+  }, [stopStream])
 
   if (error) {
     return (
@@ -218,3 +221,5 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
     </div>
   )
 }
+
+
