@@ -55,3 +55,4 @@ torch_confusion_matrix.png
 
 # Docker
 .docker/
+.vercel

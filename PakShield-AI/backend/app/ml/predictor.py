@@ -149,19 +149,52 @@ def _load_torch_model():
     return False
 
 
+def _get_yolo_path():
+    path = os.path.join(os.path.dirname(settings.model_path), "yolo_cls.pt")
+    return os.path.abspath(path)
+
+
+def _download_model_from_hf():
+    yolo_path = _get_yolo_path()
+    if os.path.exists(yolo_path):
+        return True
+    from huggingface_hub import hf_hub_download
+    import shutil
+    os.makedirs(os.path.dirname(yolo_path), exist_ok=True)
+    cached = hf_hub_download(
+        repo_id="shhhoaib/pakshield-yolo",
+        filename="yolo_cls.pt",
+    )
+    shutil.copy2(cached, yolo_path)
+    return os.path.exists(yolo_path)
+
+
 def _load_yolo_model():
     global _global_yolo_model, _global_yolo_loaded
-    if _global_yolo_loaded:
-        return _global_yolo_model is not None
-    _global_yolo_loaded = True
-    yolo_path = os.path.join(os.path.dirname(settings.model_path), "yolo_cls.pt")
+    if _global_yolo_loaded and _global_yolo_model is not None:
+        return True
+    yolo_path = _get_yolo_path()
+    if not os.path.exists(yolo_path):
+        if not _download_model_from_hf():
+            _global_yolo_loaded = True
+            _global_yolo_model = None
+            return False
     if os.path.exists(yolo_path):
         try:
-            from ultralytics import YOLO
-            _global_yolo_model = YOLO(yolo_path)
+            import torch
+            _global_yolo_model = torch.jit.load(yolo_path, map_location="cpu")
+            _global_yolo_model.eval()
+            _global_yolo_loaded = True
             return True
         except Exception:
-            _global_yolo_model = None
+            try:
+                from ultralytics import YOLO
+                _global_yolo_model = YOLO(yolo_path)
+                _global_yolo_loaded = True
+                return True
+            except Exception:
+                _global_yolo_loaded = True
+                _global_yolo_model = None
     return False
 
 
@@ -577,9 +610,37 @@ def predict_image(image_path):
 
     if _load_yolo_model():
         try:
-            yolo_results = _global_yolo_model(image_path, verbose=False)
-            top1_idx = int(yolo_results[0].probs.top1)
-            conf = float(yolo_results[0].probs.top1conf)
+            if hasattr(_global_yolo_model, 'predict'):
+                yolo_results = _global_yolo_model(image_path, verbose=False)
+                top1_idx = int(yolo_results[0].probs.top1)
+                conf = float(yolo_results[0].probs.top1conf)
+            else:
+                from PIL import Image
+                import torch
+                img = Image.open(image_path).convert("RGB").resize((224, 224))
+                arr = np.array(img, dtype=np.float32) / 255.0
+                arr = (arr - 0.5) / 0.5
+                arr = arr.transpose(2, 0, 1)
+                input_tensor = torch.tensor(arr, dtype=torch.float32).unsqueeze(0)
+                with torch.no_grad():
+                    output = _global_yolo_model(input_tensor)
+                if isinstance(output, (list, tuple)):
+                    output = output[0]
+                if isinstance(output, torch.Tensor):
+                    if output.ndim == 1:
+                        probs = torch.softmax(output, dim=0)
+                        top1_idx = int(probs.argmax())
+                        conf = float(probs[top1_idx])
+                    elif output.ndim == 2:
+                        probs = torch.softmax(output, dim=1)
+                        top1_idx = int(probs[0].argmax())
+                        conf = float(probs[0][top1_idx])
+                    else:
+                        top1_idx = 0
+                        conf = 0.5
+                else:
+                    top1_idx = 0
+                    conf = 0.5
             label = "REAL" if top1_idx == 1 else "FAKE"
             result["label"] = label
             result["confidence"] = round(max(conf * 100, MIN_CONFIDENCE), 1)
