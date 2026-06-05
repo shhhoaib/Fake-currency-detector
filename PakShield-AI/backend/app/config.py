@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     model_path: str = "./app/ml/yolo_cls.pt"
     max_upload_size: int = 10_485_760
     allowed_extensions: str = "png,jpg,jpeg"
-    cors_origins_regex: str = "https?://(localhost:[0-9]+|.*\\.vercel\\.app|.*\\.onrender\\.com|.*\\.pythonanywhere\\.com|.*\\.railway\\.app)"
+    cors_origins_regex: str = "https?://(localhost:[0-9]+|.*\\.vercel\\.app|.*\\.onrender\\.com|.*\\.huggingface\\.space|.*\\.pythonanywhere\\.com|.*\\.railway\\.app)"
 
     class Config:
         env_file = ".env"

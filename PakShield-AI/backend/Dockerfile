@@ -1,16 +1,24 @@
-FROM python:3.11-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx libglib2.0-0 && \
+    libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
 COPY . .
 
-EXPOSE 8000
+RUN mkdir -p uploads
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENV DATABASE_URL=sqlite+aiosqlite:///./pakshield.db
+ENV SECRET_KEY=pakshield-ai-secret-key-change-in-production-2026
+ENV CORS_ORIGINS_REGEX=https?://(localhost:[0-9]+|.*\.vercel\.app|.*\.huggingface\.space)
+ENV MODEL_PATH=./app/ml/yolo_cls.pt
+ENV UPLOAD_DIR=./uploads
+
+EXPOSE 7860
+
+CMD uvicorn main:app --host 0.0.0.0 --port 7860
