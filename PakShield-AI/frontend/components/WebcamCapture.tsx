@@ -36,7 +36,7 @@ export default function WebcamCapture({ onCapture, scanning }: WebcamCaptureProp
 
       const track = s.getVideoTracks()[0]
       if (track) {
-        const capabilities = track.getCapabilities?.()
+        const capabilities: any = track.getCapabilities?.()
         if (capabilities && typeof capabilities.torch === "boolean") {
           setTorchSupported(true)
         }
